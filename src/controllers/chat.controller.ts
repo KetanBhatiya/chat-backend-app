@@ -84,3 +84,51 @@ export const getMessages = async (
     next(error);
   }
 };
+
+export const markMessageRead = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const schema = z.object({
+      chatId: z.string().uuid(),
+      messageId: z.string().min(1),
+      userId: z.string().uuid(),
+    });
+
+    const { chatId, messageId, userId } = schema.parse({
+      ...req.params,
+      ...req.body,
+    });
+
+    const result = await ChatService.markMessageRead(chatId, messageId, userId);
+    return res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const updateLastSeen = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const schema = z.object({
+      chatId: z.string().uuid(),
+      userId: z.string().uuid(),
+      messageId: z.string().min(1),
+    });
+
+    const { chatId, userId, messageId } = schema.parse({
+      ...req.params,
+      ...req.body,
+    });
+
+    const result = await ChatService.updateLastSeen(chatId, userId, messageId);
+    return res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};

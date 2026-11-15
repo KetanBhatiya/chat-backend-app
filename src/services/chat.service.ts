@@ -19,7 +19,6 @@ export class ChatService {
     userAId: string,
     userBId: string
   ): Promise<CreateChatResult> {
-    // Normalize user pair order so userA < userB
     const [userA, userB] =
       userAId < userBId ? [userAId, userBId] : [userBId, userAId];
 
@@ -28,7 +27,6 @@ export class ChatService {
     try {
       await client.query('BEGIN');
 
-      // Verify both users exist
       const usersCheck = await client.query(
         'SELECT id FROM users WHERE id IN ($1, $2)',
         [userA, userB]
@@ -38,7 +36,6 @@ export class ChatService {
         throw new AppError('One or both users do not exist', 404);
       }
 
-      // Check if chat already exists
       const existingChat = await client.query(
         'SELECT id FROM chats WHERE user_a_id = $1 AND user_b_id = $2',
         [userA, userB]
@@ -49,7 +46,6 @@ export class ChatService {
         return { chatId: existingChat.rows[0].id };
       }
 
-      // Insert new chat record (ON CONFLICT handles concurrent requests)
       const insertChat = await client.query(
         `INSERT INTO chats (user_a_id, user_b_id)
          VALUES ($1, $2)
@@ -63,7 +59,6 @@ export class ChatService {
       if (insertChat.rows.length > 0) {
         chatId = insertChat.rows[0].id;
 
-        // Insert members into chat_members table
         await client.query(
           `INSERT INTO chat_members (chat_id, user_id)
            VALUES ($1, $2), ($1, $3)
@@ -71,7 +66,6 @@ export class ChatService {
           [chatId, userA, userB]
         );
       } else {
-        // If ON CONFLICT was triggered concurrently, fetch the existing chat ID
         const raceChat = await client.query(
           'SELECT id FROM chats WHERE user_a_id = $1 AND user_b_id = $2',
           [userA, userB]
@@ -91,15 +85,23 @@ export class ChatService {
 
   public static async verifyChatAndMember(
     chatId: string,
-    senderId: string
+    userId: string
   ): Promise<void> {
     const chatMember = await pool.query(
       'SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2',
-      [chatId, senderId]
+      [chatId, userId]
     );
 
     if (chatMember.rows.length === 0) {
       throw new AppError('Chat not found or user is not a member', 404);
+    }
+  }
+
+  public static async verifyMessageExists(chatId: string, messageId: string): Promise<void> {
+    const messageRef = db.collection('chats').doc(chatId).collection('messages').doc(messageId);
+    const doc = await messageRef.get();
+    if (!doc.exists) {
+      throw new AppError('Message not found', 404);
     }
   }
 
@@ -133,7 +135,6 @@ export class ChatService {
     chatId: string,
     limit: number
   ): Promise<ChatMessage[]> {
-    // Verify chat exists
     const chatExists = await pool.query('SELECT 1 FROM chats WHERE id = $1', [chatId]);
     if (chatExists.rows.length === 0) {
       throw new AppError('Chat not found', 404);
@@ -152,5 +153,52 @@ export class ChatService {
       ...(doc.data() as Omit<ChatMessage, 'id' | 'createdAt'>),
       createdAt: doc.data().createdAt?.toDate() || new Date(),
     }));
+  }
+
+  public static async markMessageRead(
+    chatId: string,
+    messageId: string,
+    userId: string
+  ): Promise<{ messageId: string; userId: string }> {
+    await this.verifyChatAndMember(chatId, userId);
+    await this.verifyMessageExists(chatId, messageId);
+
+    const receiptRef = db
+      .collection('chats')
+      .doc(chatId)
+      .collection('messages')
+      .doc(messageId)
+      .collection('readReceipts')
+      .doc(userId);
+
+    await receiptRef.set({
+      userId,
+      readAt: FieldValue.serverTimestamp(),
+    });
+
+    return { messageId, userId };
+  }
+
+  public static async updateLastSeen(
+    chatId: string,
+    userId: string,
+    messageId: string
+  ): Promise<{ userId: string; messageId: string }> {
+    await this.verifyChatAndMember(chatId, userId);
+    await this.verifyMessageExists(chatId, messageId);
+
+    const lastSeenRef = db
+      .collection('chats')
+      .doc(chatId)
+      .collection('lastSeen')
+      .doc(userId);
+
+    await lastSeenRef.set({
+      userId,
+      messageId,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    return { userId, messageId };
   }
 }
