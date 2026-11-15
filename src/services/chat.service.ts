@@ -1,5 +1,14 @@
+import { db } from '../config/firebase.js';
 import pool from '../config/database.js';
 import { AppError } from '../middlewares/error.js';
+import { FieldValue } from 'firebase-admin/firestore';
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  text: string;
+  createdAt: any;
+}
 
 export interface CreateChatResult {
   chatId: string;
@@ -78,5 +87,70 @@ export class ChatService {
     } finally {
       client.release();
     }
+  }
+
+  public static async verifyChatAndMember(
+    chatId: string,
+    senderId: string
+  ): Promise<void> {
+    const chatMember = await pool.query(
+      'SELECT 1 FROM chat_members WHERE chat_id = $1 AND user_id = $2',
+      [chatId, senderId]
+    );
+
+    if (chatMember.rows.length === 0) {
+      throw new AppError('Chat not found or user is not a member', 404);
+    }
+  }
+
+  public static async sendMessage(
+    chatId: string,
+    senderId: string,
+    text: string
+  ): Promise<ChatMessage> {
+    await this.verifyChatAndMember(chatId, senderId);
+
+    const messageRef = db.collection('chats').doc(chatId).collection('messages').doc();
+    const createdAt = FieldValue.serverTimestamp();
+
+    const messageData = {
+      senderId,
+      text,
+      createdAt,
+    };
+
+    await messageRef.set(messageData);
+
+    return {
+      id: messageRef.id,
+      senderId,
+      text,
+      createdAt,
+    };
+  }
+
+  public static async getMessages(
+    chatId: string,
+    limit: number
+  ): Promise<ChatMessage[]> {
+    // Verify chat exists
+    const chatExists = await pool.query('SELECT 1 FROM chats WHERE id = $1', [chatId]);
+    if (chatExists.rows.length === 0) {
+      throw new AppError('Chat not found', 404);
+    }
+
+    const messagesSnapshot = await db
+      .collection('chats')
+      .doc(chatId)
+      .collection('messages')
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+
+    return messagesSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...(doc.data() as Omit<ChatMessage, 'id' | 'createdAt'>),
+      createdAt: doc.data().createdAt?.toDate() || new Date(),
+    }));
   }
 }

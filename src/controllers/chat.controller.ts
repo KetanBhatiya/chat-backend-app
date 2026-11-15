@@ -37,3 +37,50 @@ export const createChat = async (
     next(error);
   }
 };
+
+export const sendMessage = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const schema = z.object({
+      chatId: z.string().uuid(),
+      senderId: z.string().uuid(),
+      text: z.string().min(1, 'Text cannot be empty'),
+    });
+
+    const { chatId, senderId, text } = schema.parse({
+      ...req.params,
+      ...req.body,
+    });
+
+    const result = await ChatService.sendMessage(chatId, senderId, text);
+    return res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMessages = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const paramsSchema = z.object({
+      chatId: z.string().uuid(),
+    });
+    const querySchema = z.object({
+      limit: z.coerce.number().min(1).max(100).default(50),
+    });
+
+    const { chatId } = paramsSchema.parse(req.params);
+    const { limit } = querySchema.parse(req.query);
+
+    const result = await ChatService.getMessages(chatId, limit);
+    return res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
