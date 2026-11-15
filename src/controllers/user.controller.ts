@@ -33,3 +33,20 @@ export const registerUser = async (
     next(error);
   }
 };
+
+export const getUserChats = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { userId } = z.object({ userId: z.string().uuid() }).parse(req.params);
+    const chats = await UserService.getUserChats(userId);
+    return res.status(200).json({ chats });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'User not found') {
+      return next(new AppError('User not found', 404));
+    }
+    next(error);
+  }
+};
